@@ -35,12 +35,6 @@ original_config = None
 #
 simulation_run_directory = "/Users/jwise/runs/13Oct15_wrapper/"
 #
-# Prefixes for data directories and filenames to search for the first
-# and last outputs in the last simulation.
-#
-output_prefixes = [["DD", "output_"], ["DD", "data"], ["DD", "DD"],
-                   ["RD", "RedshiftOutput"], ["RS", "restart"]]
-#
 # Number of cores to use with MUSIC.  If none, then use all cores.
 #
 num_cores = None
@@ -48,12 +42,16 @@ num_cores = None
 # Find the Lagrangian volume of some halo (TODO: extent to any
 # selector function besides a sphere) The routine either accepts the
 # radius and its units or mass and its units.  Two examples are
-# below.
+# below.  A "redshift" keyword can be given to specify the redshift
+# of the target halo.  If not given, it is assumed to be in the last
+# dataset that was created.
 #
 halo_info = dict(center = ([0.5, 0.5, 0.5], "kpc"),
                  mass = (1e10, "Msun/h"))
 #halo_info = dict(center = ([0.5, 0.5, 0.5], "kpc"),
 #                 rvir = (10.0, "kpc"))
+                 redshift=1.0,
+
 #
 # Safety factor to increase the radius of the sphere in units of the virial radius.
 #
@@ -127,20 +125,22 @@ with open(prev_config_logfile) as fp:
 # prism.
 round_factor = 2**initial_max_level
 
-# Use yt to search for the first and last outputs of the (level-1) simulation
-all_files = []
-for b in output_prefixes:
-    all_files += glob.glob("%s/%s????/%s????" % (prev_sim_dir, b[0], b[1]))
-times = np.zeros(len(all_files))
-for i,f in enumerate(all_files):
-    ds = yt.load(f)
-    times[i] = ds.current_time.in_units('code_time').v
-isort = np.argsort(times)
-enzo_initial_fn = all_files[isort[0]]
-enzo_final_fn = all_files[isort[-1]]
+#
+# Get the inital dataset of the simulation and either
+# the final dataset or the dataset at the specified redshift.
+#
+sim_par_file = os.path.join(prev_sim_dir, "%s-L%d.enzo" %
+                            (simulation_name, level-1))
+es = yt.simulation(sim_par_file, "Enzo", find_outputs=True)
 
-enzo_initial_fn = os.path.join(prev_sim_dir, enzo_initial_fn)
-enzo_final_fn = os.path.join(prev_sim_dir, enzo_final_fn)
+enzo_initial_fn = es.all_outputs[0]["filename"]
+if "redshift" in halo_info:
+    es.get_time_series(redshifts=[halo_info["redshift"]])
+    ds = es[0]
+    enzo_final_fn = os.path.join(ds.fullpath, ds.basename)
+else:
+    enzo_final_fn = es.all_outputs[-1]["filename"]
+
 particle_output_format = None if shape_type == "box" else "txt"
 region_center, region_size, lagr_particle_file = \
                get_center_and_extent(halo_info,
@@ -209,7 +209,7 @@ fp.write("\n"
          "#\n"
          "MustRefineParticlesCreateParticles = 3\n"
          "MustRefineParticlesRefineToLevel   = %d\n"
-         "CosmologySimulationParticleTypeName = RefinementMask" % (level))
+         "CosmologySimulationParticleTypeName          = RefinementMask\n" % (level))
 fp.close()
 
 # Copy initial conditions directory to the simulation run directory
